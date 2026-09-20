@@ -1,0 +1,57 @@
+Let's go through the parts of this codebase that aren't self-explanatory — these are the design decisions worth explaining in your own words in Criterion B.
+
+1. sqlite3.Row as the row factory (database.py:19)
+
+
+conn.row_factory = sqlite3.Row
+By default, sqlite3 returns query results as plain tuples — row[0], row[1], etc. That's fragile: if you ever reorder columns in a query, every index reference silently breaks. Setting row_factory = sqlite3.Row lets you access columns by name instead (row["goals"]), which is what you see throughout main.py and calculations.py. Worth mentioning why you chose this over tuples — readability and resilience to schema changes.
+
+2. The single-row weights table (database.py:44-50)
+
+
+CREATE TABLE IF NOT EXISTS weights (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    ...
+)
+This is a deliberate trick: rather than a separate config file or hardcoded constants, the scoring weights live in the database so they persist and can be changed at runtime (success criterion 5 — custom weights). The CHECK (id = 1) constraint is what enforces "only one row ever" — any attempt to insert a second row with a different id fails at the database level. INSERT OR IGNORE on setup means re-running setup_database() never wipes an existing weight configuration.
+
+3. ON DELETE CASCADE (database.py:33, enabled via database.py:12)
+
+
+FOREIGN KEY (player_id) REFERENCES players (player_id) ON DELETE CASCADE
+This only works because PRAGMA foreign_keys = ON is set on every connection — SQLite has foreign key enforcement off by default, unlike most databases, so this pragma is easy to forget and a good thing to call out. The cascade means deleting a player automatically deletes all their match rows in one SQL statement, instead of you writing a loop to delete matches first, then the player (which is how you'd have to do it without this constraint, and which risks orphaned rows if you forget a step).
+
+4. The weighted performance score formula (calculations.py:31-36)
+
+
+def performance_score(match, weights):
+    return (
+        match["goals"] * weights["goal_weight"]
+        + match["assists"] * weights["assist_weight"]
+        + match["saves"] * weights["save_weight"]
+    )
+This is a simple weighted sum, but the interesting design point is why it's a function of one match, not the whole list: performance_scores() (plural) just maps this over every match to build the trend line, and show_stats_flow in main.py separately sums it for a total. One small function, reused two ways — worth pointing out as an example of not duplicating the scoring logic.
+
+5. Validation loops instead of try/except at the call site (main.py:24-41)
+
+
+def ask_int(prompt, allow_blank=False):
+    while True:
+        raw = input(prompt).strip()
+        ...
+        try:
+            return int(raw)
+        except ValueError:
+            print("Please enter a whole number.")
+Rather than wrapping every single input() call across the program in its own try/except, invalid input is handled once, centrally, and every prompt in the program (goals, assists, player IDs, weights) reuses ask_int/ask_float. This is what makes the "doesn't crash on bad input" success criterion hold everywhere at once instead of needing to be re-verified per screen.
+
+6. Match ID validated against the player's own matches, not just "does this ID exist anywhere" (main.py:108-111)
+
+
+match_id = ask_int("Match ID: ")
+if not any(m["match_id"] == match_id for m in matches):
+    print("That match ID isn't in this player's records.")
+    return
+This checks membership in matches (already scoped to the selected player), not just whether the ID exists in the whole matches table. That distinction matters for correctness: without it, you could accidentally edit or delete another player's match if you guessed a valid ID.
+
+That's the core of what's non-obvious here.
