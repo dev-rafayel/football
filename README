@@ -1,57 +1,70 @@
-Let's go through the parts of this codebase that aren't self-explanatory — these are the design decisions worth explaining in your own words in Criterion B.
+Football Match Performance Tracker
+===================================
 
-1. sqlite3.Row as the row factory (database.py:19)
+A command-line tool for recording football match stats per player and
+tracking how their performance changes over time.
 
+Problem
+-------
+Professional analytics platforms are built for clubs with budgets to match;
+fan-facing apps only show live scores. Small or amateur teams have no
+lightweight way to track a player's form over a season. This tool fills
+that gap: enter stats after each match, and it builds up a persistent
+history you can summarize or graph at any time.
 
-conn.row_factory = sqlite3.Row
-By default, sqlite3 returns query results as plain tuples — row[0], row[1], etc. That's fragile: if you ever reorder columns in a query, every index reference silently breaks. Setting row_factory = sqlite3.Row lets you access columns by name instead (row["goals"]), which is what you see throughout main.py and calculations.py. Worth mentioning why you chose this over tuples — readability and resilience to schema changes.
+What it does
+------------
+- Keeps a roster of players and, for each, a log of per-match stats
+  (goals, assists, saves, minutes played).
+- Turns that log into totals, averages, and a single "performance score"
+  per match, weighted however you choose (e.g. goals count for more than
+  assists).
+- Plots the performance score over time so form trends are visible at a
+  glance, instead of buried in a table of numbers.
+- Everything is saved between runs — nothing is lost when the program
+  closes.
 
-2. The single-row weights table (database.py:44-50)
+Architecture
+------------
+The program is split by responsibility rather than kept in one file:
 
+- `database.py` owns persistence. It is the only module that talks to
+  SQLite, and every other module reaches the data through it rather than
+  running queries itself. This keeps storage swappable in principle and
+  makes it obvious where to look for anything data-related.
+- `calculations.py` is pure computation: given match data, it derives
+  totals, averages, and weighted scores. It has no knowledge of the
+  database or the terminal — it just transforms numbers.
+- `visualization.py` turns computed scores into a chart. It depends on
+  `calculations.py` but nothing depends on it, since plotting is an
+  end point, not something other logic builds on.
+- `main.py` is the interactive shell: it shows the menu, collects and
+  validates input, and calls into the other three modules. It contains
+  no business logic of its own — its job is coordination.
 
-CREATE TABLE IF NOT EXISTS weights (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    ...
-)
-This is a deliberate trick: rather than a separate config file or hardcoded constants, the scoring weights live in the database so they persist and can be changed at runtime (success criterion 5 — custom weights). The CHECK (id = 1) constraint is what enforces "only one row ever" — any attempt to insert a second row with a different id fails at the database level. INSERT OR IGNORE on setup means re-running setup_database() never wipes an existing weight configuration.
+This separation means each layer can be reasoned about (and tested)
+independently: the scoring formula doesn't care where the numbers came
+from, and the storage layer doesn't care how the numbers will be shown.
 
-3. ON DELETE CASCADE (database.py:33, enabled via database.py:12)
+Data model
+----------
+Three tables: players, matches (linked to a player, one row per match),
+and a single settings-style row holding the current scoring weights.
+Deleting a player removes their match history with them, so the data
+never ends up in an inconsistent state.
 
+Running it
+----------
+    cd /Users/raf/Documents/football
+    source venv/bin/activate
+    python3 main.py
 
-FOREIGN KEY (player_id) REFERENCES players (player_id) ON DELETE CASCADE
-This only works because PRAGMA foreign_keys = ON is set on every connection — SQLite has foreign key enforcement off by default, unlike most databases, so this pragma is easy to forget and a good thing to call out. The cascade means deleting a player automatically deletes all their match rows in one SQL statement, instead of you writing a loop to delete matches first, then the player (which is how you'd have to do it without this constraint, and which risks orphaned rows if you forget a step).
+The menu is numbered; type a number and press Enter. Data lives in
+`football.db` in this folder and survives restarts.
 
-4. The weighted performance score formula (calculations.py:31-36)
-
-
-def performance_score(match, weights):
-    return (
-        match["goals"] * weights["goal_weight"]
-        + match["assists"] * weights["assist_weight"]
-        + match["saves"] * weights["save_weight"]
-    )
-This is a simple weighted sum, but the interesting design point is why it's a function of one match, not the whole list: performance_scores() (plural) just maps this over every match to build the trend line, and show_stats_flow in main.py separately sums it for a total. One small function, reused two ways — worth pointing out as an example of not duplicating the scoring logic.
-
-5. Validation loops instead of try/except at the call site (main.py:24-41)
-
-
-def ask_int(prompt, allow_blank=False):
-    while True:
-        raw = input(prompt).strip()
-        ...
-        try:
-            return int(raw)
-        except ValueError:
-            print("Please enter a whole number.")
-Rather than wrapping every single input() call across the program in its own try/except, invalid input is handled once, centrally, and every prompt in the program (goals, assists, player IDs, weights) reuses ask_int/ask_float. This is what makes the "doesn't crash on bad input" success criterion hold everywhere at once instead of needing to be re-verified per screen.
-
-6. Match ID validated against the player's own matches, not just "does this ID exist anywhere" (main.py:108-111)
-
-
-match_id = ask_int("Match ID: ")
-if not any(m["match_id"] == match_id for m in matches):
-    print("That match ID isn't in this player's records.")
-    return
-This checks membership in matches (already scoped to the selected player), not just whether the ID exists in the whole matches table. That distinction matters for correctness: without it, you could accidentally edit or delete another player's match if you guessed a valid ID.
-
-That's the core of what's non-obvious here.
+Status
+------
+Core functionality is in place: add/edit/delete for both players and
+matches, persistent storage, stat calculations, custom weights, and
+trend plotting. Input is validated throughout (numbers, dates, ID
+lookups) so bad input doesn't crash the program.
