@@ -1,9 +1,4 @@
-"""
-main.py
-
-Entry point. Shows a text menu in the terminal and routes the user's
-choice to the right database/calculation/visualization functions.
-"""
+# Entry point which shows text menu in the terminal
 
 from datetime import datetime
 

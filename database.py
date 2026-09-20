@@ -59,7 +59,7 @@ def setup_database():
     conn.close()
 
 
-# ---- players ----
+# players
 
 def add_player(name):
     conn = connect()
@@ -101,7 +101,7 @@ def rename_player(player_id, new_name):
         conn.close()
 
 
-# ---- matches ----
+# matches
 
 def add_match(player_id, match_date, opponent, goals, assists, saves, minutes):
     conn = connect()
@@ -159,7 +159,7 @@ def delete_match(match_id):
     conn.close()
 
 
-# ---- weights ----
+# weights
 
 def get_weights():
     conn = connect()

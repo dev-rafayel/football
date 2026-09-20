@@ -1,10 +1,3 @@
-"""
-visualization.py
-
-Builds the matplotlib chart showing a player's performance score
-over time (one point per match, in date order).
-"""
-
 import matplotlib.pyplot as plt
 
 from calculations import performance_scores
